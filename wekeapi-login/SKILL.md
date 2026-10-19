@@ -40,7 +40,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 1. 登录平台 `--device-type`：`Mac` / `iPad`，二选一，必须询问。
 2. 自动验证 `--verify-type`（仅平台为 Mac 时询问）：`auto` / `manual`；平台为 iPad 时不询问，固定 `manual`（iPad 大概率需手动人脸认证，不支持自动验证）。
-3. 代理模式 `--proxy-type`：`local`（本地代理）/ `self`（自有代理）/ `platform`（平台代理），三选一，必须询问；并按所选模式收集 `--proxy-info`：
+3. 代理模式 `--proxy-type`：`local`（本地代理）/ `self`（自有代理）/ `platform`（平台代理），三选一，必须询问，**优先推荐 local（本地代理）**——向用户展示选项时把 local 放首位并标注「推荐」，仅当用户明确选择其他方式或 local 不可用（无法安装本地代理工具）时才用 self/platform；并按所选模式收集 `--proxy-info`：
    - local：本地代理 ID（形如 `pzqn-xxxx-xxxx`，CLI 无命令可查询）需用户安装官方本地代理工具并运行后才能拿到。运行 `$WEKEAPI env`，从 `proxyDownloads` 取当前环境对应平台（按用户操作系统匹配）的 `url` 展示给用户（Linux 直接展示 `note` 中的安装命令），待用户下载并运行工具取得代理 ID 后再向其索要。
    - self：向用户索要代理 Url（http(s) 地址）。
    - platform：按「用户选择微信常用地 → 匹配城市代码 → 检测可用性 → 用城市码取二维码」流程执行（详见 wekeapi-proxy skill「平台代理选择流程」）：
