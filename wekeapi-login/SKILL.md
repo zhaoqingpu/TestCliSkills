@@ -16,11 +16,15 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 ### 第零步：读取配置与在线状态检查（每次触发微信操作先走这步）
 
-1. 读取 `~/.wekeapi/config.json`（`init` 保存的 token/appId；旧版 `~/.wekeapi.json` 会被自动兼容读取）：有配置则免传凭证；完全无配置 → **引导用户到官网（`env` 输出的 `siteURL`）申请 AccessToken**，然后 `wekeapi init` 保存（自动化场景带 flag：`--token <TOKEN>`；API 地址编译期内置，无需收集 baseUrl），然后走第二步扫码登录。
+1. 读取 `~/.wekeapi/config.json`（`init` 保存的 token/appId；旧版 `~/.wekeapi.json` 会被自动兼容读取）：
+   - 有 token：免传凭证，继续下一步。
+   - **无 token：必须中断流程，向用户索要 AccessToken 并等待用户提供；拿到 token 之前不得执行任何后续步骤（不得取二维码、不得探测在线状态等）。** 用户提供后执行 `wekeapi init --token <TOKEN>` 保存（自动化场景带 flag；API 地址编译期内置，无需收集 baseUrl）。若用户没有 token，引导其到官网（`env` 输出的 `siteURL`）申请，并保持等待状态，直到用户提供 token 才继续。
 2. 已有 appId 时先检查在线状态，**不要直接扫码**：`$WEKEAPI login status --token T --app-id A`（默认不自动重连；确需重连时显式传 `--auto-connect`）
    - 返回 1（在线）：响应携带的账号个人信息已被 CLI 自动落库（wxid/appId 更新到配置、完整信息写入账号分库 `accounts` 表），直接执行用户操作，登录编排结束。
    - 返回 0（未登录）或 -1（离线）：config 中已有 appId，优先进入第一步免扫码快捷登录（不区分主动/被动退出）。
-3. 无 appId（首次使用或配置被清空）：跳过本步与第一步，直接进入第二步扫码登录。
+3. 无 appId（首次使用或配置被清空）：**必须中断流程，向用户询问并等待明确答复，二者其一确定后才可进入第二步扫码登录**：
+   - 用户提供已有 appId → 用该 appId（可 `wekeapi init --app-id <APPID>` 保存）继续；
+   - 用户没有 appId 或选择「使用新设备」→ 视为新设备登录（`login qr` 用 `--new-device`，首次不传 `--app-id` 由系统自动生成），进入第二步扫码登录。
 
 ### 第一步：免扫码快速登录（未登录/离线时优先尝试）
 
@@ -50,7 +54,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 #### 2.2 获取二维码并轮询（仅当 2.1 三项信息全部齐备）
 
 1. `$WEKEAPI login qr --token T --device-type <Mac|iPad> --verify-type <auto|manual> --proxy-type <local|self|platform> --proxy-info <代理ID|代理Url|城市代码> --out qr.jpg`
-   - 首次不传 `--app-id`（系统自动生成）；**必须记录返回 JSON 中的 `appId` 与 `qrCodeUUID`**。配置中已有 appId 时默认复用它（读配置），确需按全新设备取二维码用 `--new-device`。
+   - 无 appId（用户选择「使用新设备」）时按全新设备取码（`--new-device`，或首次不传 `--app-id` 由系统自动生成）；配置中已有 appId 时默认复用它（读配置），确需按全新设备取二维码用 `--new-device`。**必须记录返回 JSON 中的 `appId` 与 `qrCodeUUID`**。
    - **`login qr` 不保存 appId 到配置**：appId 只在登录成功（`login check` 返回 status=2）后才自动保存到 `~/.wekeapi/config.json`（stderr 有提示）。
    - 登录成功前的所有调用（`login check` 轮询、二维码超时后重新 `login qr`）必须显式传同一 `--app-id`（首次登录用 qr 返回的 appId），否则会被当作新设备重新生成 appId，容易触发风控。
    - 设备类型绑定在 appId 上：携带已有 appId 再取二维码时，`--device-type` 不改变设备类型（手机弹窗仍显示 appId 首次生成时的设备类型）。要更换设备类型必须按全新设备登录：配置中已有 appId 时用 **`--new-device`**（等价于显式空值 `--app-id=`），视为新设备登录、有风控风险，先向用户确认。**不要写 `--app-id ""`**：Windows PowerShell 5.1 会丢弃空字符串参数，导致 `--app-id` 吞掉后一个 flag（如 `--out`）并把垃圾值发给服务端报 `-50 服务异常`。
