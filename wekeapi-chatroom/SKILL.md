@@ -67,5 +67,6 @@ $WEKEAPI chatroom set-announcement --token T --app-id A --chatroom-id 12345@chat
 ## 注意
 
 - **保存/解散与列表缓存**：`save` / `unsave` / `dissolve` 成功后，`contact list --contact-type 2` 会因平台缓存未即时刷新而可能与实际不一致（刚 save 的群看不到、已 dissolve 的群仍在列表）。此时执行 `contact sync` 强制同步（或稍等片刻）后再查即可，不代表操作失败。
+- **群聊数据查询**：已同步到 wekeapi-msg-sync 的群聊（含未保存到通讯录的群）用 `$WEKEAPI data rooms --keyword <群名/群ID>` 查询；`contact list --contact-type 2` 仅返回平台缓存中保存到通讯录的群。
 - **群主/管理员权限**：`rename` / `set-remark` / `set-my-nickname` / `set-announcement` / `set-invite-confirm` / `transfer-owner` / `add-admin` / `remove-admin` / `remove-member` / `dissolve` 等需要群主或管理员权限。
 - **成员详情**：`member-detail` 仅支持微信成员；企微成员请用 contact 模块的 `contact wework-info`。

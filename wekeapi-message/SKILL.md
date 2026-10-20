@@ -1,6 +1,6 @@
 ---
 name: wekeapi-message
-description: wekeapi CLI message 模块：微信消息发送（文本/图片/视频/文件/语音/链接/小程序/Emoji/名片/AppMsg）、消息转发与撤回、下载收到的媒体（图片/视频/语音/文件/Emoji/CDN）。当用户要求发微信消息、群发、转发消息、@群成员、撤回消息或下载消息里的附件时使用。
+description: wekeapi CLI message 模块：微信消息发送（文本/图片/视频/文件/语音/链接/小程序/Emoji/名片/AppMsg）、消息转发与撤回、下载收到的媒体（图片/视频/语音/文件/Emoji/CDN），以及通过 wekeapi-msg-sync 查询消息记录。当用户要求发微信消息、群发、转发消息、@群成员、撤回消息、查询聊天记录或下载消息里的附件时使用。
 ---
 
 # message 消息
@@ -10,8 +10,8 @@ description: wekeapi CLI message 模块：微信消息发送（文本/图片/视
 - 二进制在项目 `.trae/skills/wekeapi-core/assets/bin/` 下按 OS 选择（Windows: `wekeapi-windows-amd64.exe` / Linux: `wekeapi-linux-amd64` / macOS Intel: `wekeapi-darwin-amd64` / macOS ARM: `wekeapi-darwin-arm64`），下文以 `$WEKEAPI` 代指。
 - 调用需 `--token` 与 `--app-id`（运行 `wekeapi init` 保存配置后可免传，显式 flag 优先）；stdout 恒为 JSON；退出码 0 成功 / 1 API 业务错误 / 2 本地错误。
 - `--to-wxid` 好友、群通用（群 ID 形如 `12345@chatroom`）。其余全局约定见 wekeapi-core skill。
-- 用户给的是微信号/昵称/备注而非 wxid 时，**先查本地库**（每账号一库 `~/.wekeapi/data-<wxid>.db` 的 contacts 表，`contact_id` 列才是联系人 wxid）解析，查不到再调远端接口。**查库前必须先加载 wekeapi-contact skill「本地联系人查询」一节，遵守其平台相关规则（Windows：编码红线+强制两步法，SQL 禁中文字面量、码点用 PowerShell 命令生成禁手算；macOS/Linux：中文字面量可直接用）。**
-- **消息自动落库**：所有 `send-*` 与 `forward-*` 发送成功后，CLI 自动把该消息写入当前账号分库（`~/.wekeapi/data-<wxid>.db`，wxid 取配置）的 `messages` 表（失败仅 stderr 警告，不影响发送）。表为发送/接收共用：`direction` 1-发送/2-接收（2 由后续消息回调写入）；关键字段 `new_msg_id`（发送响应的 newMsgId，按 `(wx_id, new_msg_id)` 幂等去重）、`msg_type`、`from_wxid`/`to_wxid`、`content`（文本内容/文件路径/标题链接/xml 等）、`raw_json`（命令与 flag 原始值，不含 base64 文件体）。撤销等非发送命令不落库。
+- 用户给的是微信号/昵称/备注而非 wxid 时，先用 `$WEKEAPI data contacts --keyword <关键词>` 解析（`data.contacts[].id` 即 wxid），查不到再调远端接口；**不要再用 sqlite3 查本地数据库**。
+- **消息由 wekeapi-msg-sync 统一存储**：服务接收消息回调并落库，主 CLI 不再写本地 messages 表。查询聊天记录用 `$WEKEAPI data messages`（`--conversation-id S:<wxid>|R:<roomid>`、`--keyword`、`--start-time`/`--end-time`、`--direction 0|1|2`、`--page`/`--limit`），返回 `data.messages[]`（含 `new_msg_id`/`from`/`to`/`room_id`/`content`/`create_time`/`revoked`）。
 
 ## 发送
 
@@ -84,4 +84,4 @@ $WEKEAPI message download-image --token T --app-id A --type 1 --xml '<msg><img .
 - **撤回窗口**：微信撤回仅在约 2 分钟内有效，超时返回 `-52`（后端 `[-430]`）。需要撤回时请"先发后立即撤"（拿到 newMsgId/createTime 后马上调 `revoke`）。
 - **目标不校验**：向不存在或非法的 `--to-wxid` 发送文本，服务端不做校验，仍返回 `code:0`（不会报业务错误）；请自行确保目标 wxid/群 ID 正确。
 - **语音格式**：`send-voice` 仅支持 wav / 原生 SILK，其它格式返回 `-30 不支持的格式`。
-- 消息落库见前置说明；`revoke` 等非发送命令不落库。
+- 消息存储由 wekeapi-msg-sync 负责，查询用 `$WEKEAPI data messages`；发送/转发命令本身不再写本地数据库。

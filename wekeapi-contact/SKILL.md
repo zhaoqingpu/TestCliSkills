@@ -1,6 +1,6 @@
 ---
 name: wekeapi-contact
-description: wekeapi CLI contact 模块：微信通讯录（好友列表/简要/详细信息、通讯录同步、搜索联系人、添加/同意/删除好友、备注、仅聊天权限、企微好友、手机通讯录）。当用户要求查好友、搜索微信号、加好友、删好友、改备注、查企微联系人、上传手机通讯录，或需要把昵称/备注/微信号解析成 wxid、查询本地联系人数据库（含 sqlite3 查询 ~/.wekeapi/data-*.db）时使用。
+description: wekeapi CLI contact 模块：微信通讯录（好友列表/简要/详细信息、通讯录同步、搜索联系人、添加/同意/删除好友、备注、仅聊天权限、企微好友、手机通讯录）。当用户要求查好友、搜索微信号、加好友、删好友、改备注、查企微联系人、上传手机通讯录，或需要把昵称/备注/微信号解析成 wxid、查询 wekeapi-msg-sync 中的联系人数据时使用。
 ---
 
 # contact 通讯录
@@ -11,37 +11,20 @@ description: wekeapi CLI contact 模块：微信通讯录（好友列表/简要/
 - 调用需 `--token` 与 `--app-id`（运行 `wekeapi init` 保存配置后可免传，显式 flag 优先）；stdout 恒为 JSON；退出码 0 成功 / 1 API 业务错误 / 2 本地错误。
 - 其余全局约定见 wekeapi-core skill。
 
-## 本地联系人查询（解析 wxid 优先走这里）
+## 联系人数据查询（解析 wxid 优先走这里）
 
-登录后 `sync all`（见 wekeapi-login skill）已把通讯录同步到本地 SQLite（**每账号一库**，默认 `~/.wekeapi/data-<wxid>.db`，wxid 见 `~/.wekeapi/config.json` 的 `wxid` 字段）。需要把微信号/昵称/备注解析成 wxid 时，**先用 sqlite3 查本地库，查不到再调远端接口**，避免多余 API 调用：
+登录成功后，联系人数据由 `wekeapi-msg-sync` 服务统一存储。需要把微信号/昵称/备注解析成 wxid 时，**先用 `data contacts` 查询，查不到再调远端接口**，避免多余 API 调用：
 
-- **关键：`contact_id` 才是联系人的 wxid**（好友/群/公众号/企微 ID 都在这一列）。**`wx_id` 是数据归属键（sync 写入时为 appId，同一账号所有行相同），查询时不要选它、更不要把它当联系人 wxid 用。**
-- **标签字典**：`contacts.labels` 存的是逗号分隔的标签 ID；标签名在**同库 `labels` 表**（`sync all` 已最先同步，`wx_id` 同为 appId），按 `label_id` 关联即可把标签 ID 翻译成名称。
-- **编码红线（仅 Windows 生效；macOS/Linux 的 shell 与 sqlite3 均为 UTF-8，中文字面量可直接写、无需转码，`char()` 写法亦兼容）：SQL 内禁止出现中文字面量，一律用 `char(码点1,码点2,...)` 代替。** 原因：Windows 下 PowerShell 把中文参数传给 sqlite3.exe 时按系统 ANSI 代码页（GBK）转码，而库内是 UTF-8，字节不一致导致 LIKE **静默查不到、不报错**。做法：把关键词逐字符转成十进制 Unicode 码点填入 `char()`，例：「超红」→ `char(36229,32418)`（超=36229，红=32418）。
-- **强制两步法（仅 Windows；禁止跳步、禁止手算码点）**：
-  1. 先用 PowerShell 把关键词转成十进制码点（传中文给 powershell.exe 是 Unicode 无 GBK 问题，红线只针对 sqlite3.exe）。**命令必须用下方无变量写法**：agent 的 shell 本身常是 PowerShell，嵌套调用 `powershell -Command "..."` 时外层会把 `$k`/`$_` 当变量展开吞掉导致语法错误：
+```bash
+$WEKEAPI data contacts --keyword <昵称/备注/微信号/wxid> [--type friend] [--limit 20]
+```
 
-     ```bash
-     powershell -Command "[int[]][char[]]'庆普' -join ','"
-     ```
-
-  2. 把输出（如 `24198,26222`）填入 `char(...)` 再套用下方 SQL 模板。**码点只能来自该命令输出，心算/查表容易错一位且无法察觉。**
-- 结果判读：按红线写的 SQL 若返回空，先确认码点来自第 1 步输出、`contact_id`/`wx_id` 没选反列，再考虑联系人真不存在或库未同步（`sync all` 刷新后重查）；**不要把空结果直接当「联系人不存在」**。
-- **多字段一次匹配（默认用这条）**：关键字一次 OR 匹配 8 个字段——`contact_id` wxid、`alias` 微信号、`nickname` 昵称、`remark` 备注、`signature` 签名、`wording_name`/`wording_id` 企微企业、`raw_json` 详情原始 JSON（含手机号、地区等兜底信息），尽量一条 SQL 就命中（下例码点 `36229,32418` 对应关键词「超红」；Windows 用时替换成强制两步法第 1 步的输出，macOS/Linux 直接写中文字面量）：
-
-  ```bash
-  sqlite3 ~/.wekeapi/data-<wxid>.db "WITH kw AS (SELECT '%'||char(36229,32418)||'%' AS p) SELECT contact_id, contact_type, alias, nickname, remark, signature FROM contacts, kw WHERE contact_id LIKE p OR alias LIKE p OR nickname LIKE p OR remark LIKE p OR signature LIKE p OR wording_name LIKE p OR wording_id LIKE p OR raw_json LIKE p;"
-  ```
-
-- 结果多时收窄：明确找好友加 `AND contact_type=1`（2-群聊 / 3-公众号 / 4-企微好友）；优先取 `nickname`/`remark`/`alias` 与关键词**完全相等**的行。
-- 精确匹配变体（关键词恰好是完整昵称/备注/微信号时用，零误报；`contact_id` 通常为 ASCII，wxid 可直接写字面量）：
-
-  ```bash
-  sqlite3 ~/.wekeapi/data-<wxid>.db "SELECT contact_id, contact_type, alias, nickname, remark FROM contacts WHERE nickname=char(36229,32418) OR remark=char(36229,32418) OR alias=char(36229,32418);"
-  ```
-
-- 本地未命中再走远端：`contact search --contact-info <微信号/手机号>`（结果用于加好友；若已是好友，响应中的 V3 即其 wxid）；或 `contact list` 取 ID 后用 `contact brief`/`detail` 批量拉信息。
-- 本地库非空但明显缺数据（如远端刚加的好友），可先 `sync all` 刷新再查。
+- 输出为 CLI 统一信封 `{"code":0,"message":"OK","data":{...}}`；`data.contacts[].id` 就是联系人 wxid，`label_ids`/`labels` 为标签 ID 与名称。
+- `--type` 可选：`friend`（好友）/`chatroom`（群）/`gh`（公众号）/`wework`（企微好友）/`all`（默认全部）；结果多时用来收窄。
+- 优先取 `nickname`/`remark`/`alias` 与关键词**完全相等**的行；模糊结果再结合昵称/备注判断。
+- 服务未运行：先 `$WEKEAPI data start`；刚加的好友可能因平台同步延迟而缺失，可 `$WEKEAPI data sync` 刷新后重查。
+- 数据未命中再走远端：`contact search --contact-info <微信号/手机号>`（结果用于加好友；若已是好友，响应中的 V3 即其 wxid）；或 `contact list` 取 ID 后用 `contact brief`/`detail` 批量拉信息。
+- **不要再用 `sqlite3` 查询本地数据库**（旧版本地库已废弃），也不需要 Windows 中文码点转码；HTTP/JSON 为 UTF-8，中文关键词直接传。
 
 ## 命令表
 

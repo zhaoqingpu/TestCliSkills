@@ -1,6 +1,6 @@
 ---
 name: wekeapi-login
-description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询、在线状态检查、免扫码快捷登录、退出登录，以及登录成功后的数据同步（好友/群组/公众号/企微好友同步到本地 SQLite）。当用户要求登录微信、获取登录二维码、检查微信在线状态、掉线重连、免扫码快捷登录、退出微信登录或同步微信数据时使用。
+description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询、在线状态检查、免扫码快捷登录、退出登录，以及登录成功后的数据服务接管（自动写 wekeapi-msg-sync.json 并启动/重启 wekeapi-msg-sync，触发全量同步）。当用户要求登录微信、获取登录二维码、检查微信在线状态、掉线重连、免扫码快捷登录、退出微信登录或同步微信数据时使用。
 ---
 
 # login 登录
@@ -12,7 +12,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 - stdout 恒为 JSON；退出码 0 成功 / 1 API 业务错误 / 2 本地错误。
 - 其余全局约定（--data 透传、--timeout 等）见 wekeapi-core skill。
 
-## 登录编排（按序执行：状态检查 → 免扫码重登 → 扫码登录 → 数据同步）
+## 登录编排（按序执行：状态检查 → 免扫码重登 → 扫码登录 → 数据同步服务接管）
 
 ### 第零步：读取配置与在线状态检查（每次触发微信操作先走这步）
 
@@ -20,7 +20,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
    - 有 token：免传凭证，继续下一步。
    - **无 token：必须中断流程，向用户索要 AccessToken 并等待用户提供；拿到 token 之前不得执行任何后续步骤（不得取二维码、不得探测在线状态等）。** 用户提供后执行 `wekeapi init --token <TOKEN>` 保存（自动化场景带 flag；API 地址编译期内置，无需收集 baseUrl）。若用户没有 token，引导其到官网（`env` 输出的 `siteURL`）申请，并保持等待状态，直到用户提供 token 才继续。
 2. 已有 appId 时先检查在线状态，**不要直接扫码**：`$WEKEAPI login status --token T --app-id A`（默认不自动重连；确需重连时显式传 `--auto-connect`）
-   - 返回 1（在线）：响应携带的账号个人信息已被 CLI 自动落库（wxid/appId 更新到配置、完整信息写入账号分库 `accounts` 表），直接执行用户操作，登录编排结束。
+   - 返回 1（在线）：CLI 已自动把 wxid/appId 写入配置，并把最新凭证写入 `wekeapi-msg-sync.json`，确保数据同步服务按最新凭证运行（配置未变化且服务已在运行时不会重启）；直接执行用户操作，登录编排结束。
    - 返回 0（未登录）或 -1（离线）：config 中已有 appId，优先进入第一步免扫码快捷登录（不区分主动/被动退出）。
 3. 无 appId（首次使用或配置被清空）：**必须中断流程，向用户询问并等待明确答复，二者其一确定后才可进入第二步扫码登录**：
    - 用户提供已有 appId → 用该 appId（可 `wekeapi init --app-id <APPID>` 保存）继续；
@@ -30,7 +30,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 1. `$WEKEAPI login quick --token T --app-id A`：免扫码快捷登录，手机弹窗点确认即可；成功返回新的 `qrCodeUUID`。
 2. 用返回的 `qrCodeUUID` 每 5 秒轮询 `$WEKEAPI login check --token T --app-id A --qr-code-uuid U`：
-   - status=2 → 登录成功 → 执行第三节「数据同步」→ 执行用户操作。
+   - status=2 → 登录成功：CLI 自动记录 appId/wxid，并把凭证同步到 `wekeapi-msg-sync.json`、（重启）启动数据同步服务 → 确认服务就绪后执行用户操作。
    - `login quick` 返回 -24（新设备登录后掉线、风控下线等被动退出不支持 quick），或轮询超时/失败 → 转第二步扫码登录。
 3. config 已有 appId 且离线（0/-1）时一律优先 quick，无需区分主动/被动退出；仅当 quick 返回 -24 或轮询超时/失败，才转第二步扫码登录。
 
@@ -61,20 +61,65 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
    - **展示二维码必须最快完成（高优先级）**：`login qr` 命令返回后，必须在**下一次回复中立即**用 markdown 图片语法展示二维码（`![qr](file:///qr.jpg绝对路径)`），让用户在聊天中直接看到并扫码；禁止任何中间步骤——不得加载其他 skill、不得渲染 widget、不得先做任何其他工具调用或解释；展示二维码之前不要启动轮询。
 2. 每 5 秒轮询：`$WEKEAPI login check --token T --app-id A --qr-code-uuid U`
    - `data.status`：0 未扫码 / 1 已扫码 / 2 已登录 / 3 失败 / 10 需验证 / 11 待手机点确认。
-   - status 2：停止轮询，appId 已保存到配置，CLI 自动补调一次在线状态检测采集个人信息（wxid 落配置、完整信息落库）→ 执行第三节「数据同步」→ 执行用户操作。
+   - status 2：停止轮询，appId 已保存到配置，CLI 自动补调一次在线状态检测记录 wxid，并把最新凭证同步到 `wekeapi-msg-sync.json`、（重启）启动数据同步服务 → 确认服务就绪后执行用户操作。
    - status 3：报错终止；status 10：触发身份验证，接口返回验证二维码，需账号持有人用专用扫码验证工具验证，提示用户。
    - 轮询超时（二维码过期）：用同一 `--app-id` 重新执行 2.1 取新二维码。
 
-## 第三节：登录成功后数据同步（固定步骤，任何登录路径成功后必经）
+## 第三节：登录成功后的数据服务接管（固定步骤，任何登录路径成功后必经）
 
-- 触发时机：扫码登录或快捷登录轮询到 status=2 后、执行用户原操作之前，必须先完成数据同步。
-- 命令：`$WEKEAPI sync all`（可选 `--types labels,friends,chatrooms,ghs,wework`、`--db <路径>`，通常全部省略）。
-- 缺省全量同步五类数据到本地 SQLite（**每账号一库**，默认 `~/.wekeapi/data-<wxid>.db`，wxid 取配置；配置缺 wxid 会 exit 2——先登录成功一次或显式传 `--db`；旧版库 `~/.wekeapi/data.db` / `~/.wekeapi.db` 存在且新库不存在时自动复制迁移，旧文件保留）：`labels` 标签 / `friends` 好友 / `chatrooms` 群组 / `ghs` 公众号 / `wework` 企微好友。
-- **标签最先同步**（labels 表，appId 归属与 contacts 一致，全量 upsert + 删除本地多余）：标签是联系人 `labels` 列（逗号分隔标签 ID）的字典数据，先于联系人入库以便关联查询；`--types` 选中 labels 时无论位置均最先执行。
-- 同步只需 token/appId（通讯录接口无需 wxid），自动读取配置，无需显式传参；本地数据以 appId 作为归属键入库。
-- stdout 输出同步摘要 JSON（各类型 Fetched/Added/Deleted/Updated 与 dbPath）；进度日志走 stderr。
-- 退出码：0 全部成功 / 1 存在类型同步失败 / 2 本地错误（参数/数据库）。退出码 1 时读取 stdout 摘要，向用户报告失败类型，可用 `--types <失败类型>` 单独重试一次；退出码 2 时检查参数与磁盘，不要反复重试。
-- 群组只做新增/更新不删除（接口只返回保存到通讯录的群）；好友自动过滤系统账号（filehelper、fmessage 等）。
+- 触发时机：扫码登录或快捷登录轮询到 status=2 后、执行用户原操作之前，必须先完成数据服务接管。
+- CLI 已自动完成，**无需再执行旧的 `sync all`**：
+  1. 把主配置中的 `token`/`appId`/`baseURL`/`wxid` 写入服务目录的 `wekeapi-msg-sync.json`；
+  2. 若 wekeapi-msg-sync 已启动，先关闭再启动；未启动则直接启动（首次启动按默认配置：SQLite `wekeapi_msg_sync.db`、端口 `3006`）；
+  3. 服务启动后立即执行一次全量同步（标签/好友/群组/公众号/企微好友）并按 `sync_interval` 周期差量同步。
+- 服务目录查找顺序：`--msg-sync-dir`（`data` 命令组持久 flag）> 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 从当前目录/可执行文件目录向上查找 `wekeapi-msg-sync` 目录 > 兜底 `~/.wekeapi/msg-sync`。
+- 登录命令的 stdout 仍是登录接口 JSON；服务启动进度与结果提示走 stderr（前缀 `[msg-sync]`）。若启动失败（如找不到服务可执行文件），登录仍算成功，但需向用户报告警告并检查服务目录。
+
+### 3.1 数据服务配置（登录成功后必须询问用户，两步，不可跳过）
+
+登录成功时服务已按默认值启动，**紧接着必须让用户设置数据库与服务端口**，确认后用 `data config` 改写配置、`data sync` 重启生效。
+
+先查看当前配置（不带修改参数时**只读、不写文件**）：
+
+```bash
+$WEKEAPI data config
+```
+
+- 输出 `data.db`（sqlite/mysql）、`data.db_path`/`data.dsn`（DSN 已脱敏）、`data.port`。
+- 若已是用户此前确认过的非默认配置（如 MySQL 或端口不是 3006），先问一句「是否沿用当前配置（数据库 X，端口 Y）」，用户选择沿用则直接跳到 3.3。
+- 不要替用户决定数据库类型；**两步必须分别询问并等待用户答复**后再执行命令。
+
+**第 1 步：选数据库（二选一）**
+
+| 选项 | 需要再问的信息 |
+|---|---|
+| `SQLite`（推荐，零部署，单机够用） | SQLite 文件名，**默认 `wekeapi_msg_sync.db`**（相对服务目录）；用户确认默认值就不用改 |
+| `MySQL`（多端共享/已有 MySQL） | MySQL 连接 URI，形如 `mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`；也接受 DSN 写法 `user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`。提醒：**数据库需提前创建**（表由服务自动创建），账号需有建表权限 |
+
+**第 2 步：选服务端口**
+
+- 默认 `3006`；用户确认默认值或填 1-65535 的其他端口。端口被占用时服务启动会失败（日志见服务目录 `wekeapi-msg-sync.log`），换端口重试即可。
+
+### 3.2 写入配置并重启生效
+
+```bash
+# SQLite（文件名用用户给的值，未改则用默认 wekeapi_msg_sync.db）
+$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>
+# MySQL（连接串含特殊字符，PowerShell 用单引号包裹）
+$WEKEAPI data config --db mysql --db-dsn '<连接 URI>' --port <端口>
+# 重启服务使配置生效（重启后自动全量同步）
+$WEKEAPI data sync
+```
+
+- `data config` 只改数据库与端口，保留 token/appId/wxid 等字段；输出 `data.changed` 表示配置是否变化，`data.needRestart=true` 表示运行中的服务仍用旧配置。
+- **切换数据库类型不迁移旧数据**：换成 MySQL 后需等重新全量同步完成；旧 SQLite 文件保留在服务目录，可提示用户自行清理。
+- Windows PowerShell 下连接串用单引号（`--db-dsn '...'`），避免 `$`/`@`/`&` 被解释；**不要写 `--db-dsn ""`**。
+- 用户拒绝调整（明确表示用默认值）时，也至少确认一次端口，再按默认值跳过写入。
+
+### 3.3 确认就绪
+
+- 确认服务就绪：`$WEKEAPI data status`（返回 `data.status` 为 `idle`/`syncing`/`error`，并给出 `contacts_count`/`rooms_count`/`messages_count`；首次同步完成前可能为 `syncing`）。
+- 后续查询数据用 `$WEKEAPI data contacts/messages/rooms`（见 wekeapi-core skill），不要再用 sqlite3 查本地数据库；服务未运行时可 `$WEKEAPI data start`，需要重新全量同步时用 `$WEKEAPI data sync`（等价 `data restart`）。
 - 同步完成（或失败已报告）后才视为登录编排结束，继续执行用户原操作。
 
 ## 命令表
@@ -83,15 +128,16 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 |---|---|---|
 | `login qr` | 获取登录二维码 | **`--device-type`** Mac/iPad、**`--verify-type`** manual/auto、**`--proxy-type`** local/self/platform、**`--proxy-info`**（local 传代理ID，需用户安装本地代理工具获取，下载链接见 2.1 / self 传代理Url / platform 传城市代码，须经用户选择微信常用地与可用性检测，流程见 2.1 与 wekeapi-proxy skill）；`--new-device` 按全新设备取码（忽略配置 appId，等价 `--app-id=`）；`--out` 保存二维码图片 |
 | `login check` | 轮询检测登录状态 | **`--qr-code-uuid`** |
-| `login status` | 检查在线状态（1 在线 / -1 离线 / 0 未登录）；在线时自动记录账号信息（wxid/appId → 配置，完整个人信息 → 账号分库 `accounts` 表） | `--auto-connect` 掉线时是否自动重连（可选，默认不重连） |
+| `login status` | 检查在线状态（1 在线 / -1 离线 / 0 未登录）；在线时自动记录 wxid/appId，并确保数据同步服务按最新凭证运行 | `--auto-connect` 掉线时是否自动重连（可选，默认不重连） |
 | `login quick` | 快捷登录（免扫码，手机点确认） | — |
 | `login logout` | 主动退出登录 | — |
-| `sync all` | 登录成功后数据同步：标签（最先）/好友/群组/公众号/企微好友 → 本地 SQLite（第三节） | `--types`（缺省全量）、`--db`（默认 `~/.wekeapi/data-<wxid>.db`，wxid 取配置）均可省略 |
+| `data status` | 登录后查看数据同步状态与数据量（wekeapi-msg-sync） | — |
+| `data config` | 登录成功后设置数据同步服务的数据库（SQLite/MySQL）与端口 | `--db` sqlite/mysql、`--db-path` SQLite 文件名（默认 `wekeapi_msg_sync.db`）、`--db-dsn` MySQL 连接串、`--port`（默认 3006）；不带参数只查看当前配置 |
 
 ## 注意
 
 - appId 即设备身份：设备类型（Mac/iPad）在 appId 首次生成时绑定，之后传 `--device-type` 不再改变；换设备类型需按新设备登录（`--new-device` 或 `--app-id=`）。
 - appId 仅在登录成功（status=2）后落盘 `~/.wekeapi/config.json`；登录成功前调用 `login check` 或重取二维码必须显式传 `--app-id`。
-- 账号信息记录：统一以在线状态检测响应为数据源——`login status` 在线时自动记录；`login check` 登录成功后 CLI 自动补调一次 status 完成同样记录（appId 先落盘配置）。个人信息（昵称/别名/头像）upsert 到该账号分库 `~/.wekeapi/data-<wxid>.db` 的 `accounts` 表，配置只存 wxid，查完整信息（如显示昵称）用 sqlite3 查 `accounts` 表。
+- 账号信息记录：统一以在线状态检测响应为数据源——`login status` 在线时自动记录；`login check` 登录成功后 CLI 自动补调一次 status 完成同样记录（appId 先落盘配置）。配置只存 wxid/appId，业务数据（联系人/消息/群聊）由 wekeapi-msg-sync 服务存储，用 `data` 命令查询。
 - deviceType 优先 Mac（支持自动验证，成功率约 90%）；连续 2 次自动验证失败后改用 manual，勿再重试 auto。
 - 如需保留 PC 登录机会可选 iPad，但大概率需手动人脸认证。

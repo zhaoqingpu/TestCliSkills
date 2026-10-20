@@ -23,7 +23,7 @@ description: wekeapi CLI label 模块：微信标签管理（获取标签列表�
 ## 注意
 
 - 手机端增删标签不会自动同步到平台；手机上加了新标签后，先调 `label list` 同步再操作。
-- `sync all`（wekeapi-login skill）会把标签全量落库到账号分库的 `labels` 表（标签最先同步），`contacts.labels` 存逗号分隔标签 ID，可与 labels 表按 `label_id` 关联查名称。
+- 标签数据由 wekeapi-msg-sync 随联系人一起同步；用 `$WEKEAPI data contacts --keyword <关键词>` 查询时，返回的 `label_ids`/`labels` 已把标签 ID 翻译成名称，可直接用于确认好友现有标签。
 - `set-friend` 需提交该好友的**全部**标签（全量覆盖，不是增量）。
 
 ## 示例
