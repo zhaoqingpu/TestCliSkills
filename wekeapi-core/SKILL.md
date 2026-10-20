@@ -27,10 +27,10 @@ Linux/macOS 首次使用前执行一次 `chmod +x <对应路径>`。若 macOS �
 联系人/消息/群聊等业务数据由 `wekeapi-msg-sync` 服务统一接收回调、同步并存储，主 CLI 不再维护本地业务数据库。
 
 - **无需手工启动**：`login check` 登录成功（status=2）后，CLI 会自动把 token/appId/baseURL/wxid 写入服务目录的 `wekeapi-msg-sync.json`，并启动服务；服务已启动时先关闭再启动（重新全量同步）。
-- **服务目录查找顺序**：`data` 命令的 `--msg-sync-dir` > 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 从当前目录/可执行文件目录向上查找 `wekeapi-msg-sync` 目录。
+- **服务目录查找顺序**：`data` 命令的 `--msg-sync-dir` > 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 默认 `~/.wekeapi/msg-sync`。配置 `wekeapi-msg-sync.json`、日志 `wekeapi-msg-sync.log`、PID 与 SQLite 数据库都在该目录（默认 `~/.wekeapi/msg-sync/`），不再跟随仓库/可执行文件目录。
 - **查询用 `data` 命令**（见下文），服务未运行时先 `$WEKEAPI data start`。
-- **数据库与端口可配置**：默认 SQLite（服务目录下 `wekeapi_msg_sync.db`）、端口 `3006`；用 `$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>` 或 `$WEKEAPI data config --db mysql --db-dsn '<连接串>' --port <端口>` 设置，改后 `$WEKEAPI data sync` 重启生效；不带参数只查看当前配置（不写文件）。
-- **排查**：`$WEKEAPI data status` 查看同步状态与数据量；服务日志在服务目录的 `wekeapi-msg-sync.log`。
+- **数据库与端口可配置**：默认 SQLite（`~/.wekeapi/msg-sync/wekeapi_msg_sync.db`）、端口 `3006`；用 `$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>` 或 `$WEKEAPI data config --db mysql --db-dsn '<连接串>' --port <端口>` 设置，改后 `$WEKEAPI data sync` 重启生效；不带参数只查看当前配置（不写文件）。
+- **排查**：`$WEKEAPI data status` 查看同步状态与数据量；服务日志在 `~/.wekeapi/msg-sync/wekeapi-msg-sync.log`。
 
 ## 初始化配置（推荐）
 
@@ -41,7 +41,7 @@ Linux/macOS 首次使用前执行一次 `chmod +x <对应路径>`。若 macOS �
 - 自动化（skill/agent，stdin 非交互终端）：CLI 不会提示。**收集顺序固定：向用户索取 AccessToken（官网为 `env` 输出的 `siteURL`），执行 `init --token <TOKEN>` 保存**。
 
 - **环境信息（编译期内置）**：二进制区分线上（prod，默认编译）/测试（test，`go build -tags test`）两个环境。运行 `$WEKEAPI env`（无需凭证）查看：`env` 环境名、`baseURL` 默认 API 地址、`siteURL` 官网、`proxyDownloads` 各平台本地代理工具下载地址（Linux 含一键安装命令）。**skill 中任何地址都从这里现查，不要硬编码**。
-- **本地数据目录**：主 CLI 只保存配置文件 `~/.wekeapi/config.json`（`token`/`appId`/`baseURL`/`wxid`/可选的 `msgSyncDir`），**不再维护本地业务数据库**。`wxid` 在登录成功/`login status` 返回个人信息时自动记录；联系人、消息、群聊与标签由 `wekeapi-msg-sync` 服务存储（默认 SQLite，可配置 MySQL），服务配置位于服务目录的 `wekeapi-msg-sync.json`，由登录成功自动写入。旧版 `~/.wekeapi.json` 仍可只读兼容，首次保存后迁移到 `~/.wekeapi/config.json`。
+- **本地数据目录**：主 CLI 只保存配置文件 `~/.wekeapi/config.json`（`token`/`appId`/`baseURL`/`wxid`/可选的 `msgSyncDir`），**不再维护本地业务数据库**。`wxid` 在登录成功/`login status` 返回个人信息时自动记录；联系人、消息、群聊与标签由 `wekeapi-msg-sync` 服务存储（默认 SQLite，可配置 MySQL），服务配置位于 `~/.wekeapi/msg-sync/wekeapi-msg-sync.json`，由登录成功自动写入。旧版 `~/.wekeapi.json` 仍可只读兼容，首次保存后迁移到 `~/.wekeapi/config.json`。
 - `--token` 必填（AccessToken 请到官网申请，`$WEKEAPI env` 查 `siteURL`）；`--app-id` 首次登录可为空，省略时保留配置中已有值，显式清空用 `--app-id=`（等号空值语法；**不要写 `--app-id ""`**），新设备登录也可用 `login qr --new-device`。
 - `--base-url` 一般无需传：API 地址由编译环境内置（`$WEKEAPI env` 查 `baseURL`），仅临时指向其他地址时才显式传入。
 - appId 仅在登录成功（`login check` 返回 status=2）后自动写入配置（连同 wxid），`login qr` 阶段不保存；后续命令可用 `login status` 先检查在线状态再操作。

@@ -72,7 +72,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
   1. 把主配置中的 `token`/`appId`/`baseURL`/`wxid` 写入服务目录的 `wekeapi-msg-sync.json`；
   2. 若 wekeapi-msg-sync 已启动，先关闭再启动；未启动则直接启动（首次启动按默认配置：SQLite `wekeapi_msg_sync.db`、端口 `3006`）；
   3. 服务启动后立即执行一次全量同步（标签/好友/群组/公众号/企微好友）并按 `sync_interval` 周期差量同步。
-- 服务目录查找顺序：`--msg-sync-dir`（`data` 命令组持久 flag）> 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 从当前目录/可执行文件目录向上查找 `wekeapi-msg-sync` 目录 > 兜底 `~/.wekeapi/msg-sync`。
+- 服务目录查找顺序：`--msg-sync-dir`（`data` 命令组持久 flag）> 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 默认 `~/.wekeapi/msg-sync`；配置 `wekeapi-msg-sync.json`、日志 `wekeapi-msg-sync.log`、PID 与 SQLite 数据库都在该目录。
 - 登录命令的 stdout 仍是登录接口 JSON；服务启动进度与结果提示走 stderr（前缀 `[msg-sync]`）。若启动失败（如找不到服务可执行文件），登录仍算成功，但需向用户报告警告并检查服务目录。
 
 ### 3.1 数据服务配置（登录成功后必须询问用户，两步，不可跳过）
@@ -93,12 +93,12 @@ $WEKEAPI data config
 
 | 选项 | 需要再问的信息 |
 |---|---|
-| `SQLite`（推荐，零部署，单机够用） | SQLite 文件名，**默认 `wekeapi_msg_sync.db`**（相对服务目录）；用户确认默认值就不用改 |
+| `SQLite`（推荐，零部署，单机够用） | SQLite 文件名，**默认 `wekeapi_msg_sync.db`**（相对服务目录 `~/.wekeapi/msg-sync`）；用户确认默认值就不用改 |
 | `MySQL`（多端共享/已有 MySQL） | MySQL 连接 URI，形如 `mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`；也接受 DSN 写法 `user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`。提醒：**数据库需提前创建**（表由服务自动创建），账号需有建表权限 |
 
 **第 2 步：选服务端口**
 
-- 默认 `3006`；用户确认默认值或填 1-65535 的其他端口。端口被占用时服务启动会失败（日志见服务目录 `wekeapi-msg-sync.log`），换端口重试即可。
+- 默认 `3006`；用户确认默认值或填 1-65535 的其他端口。端口被占用时服务启动会失败（日志见 `~/.wekeapi/msg-sync/wekeapi-msg-sync.log`），换端口重试即可。
 
 ### 3.2 写入配置并重启生效
 
@@ -112,7 +112,7 @@ $WEKEAPI data sync
 ```
 
 - `data config` 只改数据库与端口，保留 token/appId/wxid 等字段；输出 `data.changed` 表示配置是否变化，`data.needRestart=true` 表示运行中的服务仍用旧配置。
-- **切换数据库类型不迁移旧数据**：换成 MySQL 后需等重新全量同步完成；旧 SQLite 文件保留在服务目录，可提示用户自行清理。
+- **切换数据库类型不迁移旧数据**：换成 MySQL 后需等重新全量同步完成；旧 SQLite 文件保留在 `~/.wekeapi/msg-sync`，可提示用户自行清理。
 - Windows PowerShell 下连接串用单引号（`--db-dsn '...'`），避免 `$`/`@`/`&` 被解释；**不要写 `--db-dsn ""`**。
 - 用户拒绝调整（明确表示用默认值）时，也至少确认一次端口，再按默认值跳过写入。
 
