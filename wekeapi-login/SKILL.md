@@ -1,6 +1,6 @@
 ---
 name: wekeapi-login
-description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询、在线状态检查、免扫码快捷登录、退出登录，以及登录成功后的数据服务接管（自动写 wekeapi-msg-sync.json 并启动/重启 wekeapi-msg-sync，触发全量同步）。当用户要求登录微信、获取登录二维码、检查微信在线状态、掉线重连、免扫码快捷登录、退出微信登录或同步微信数据时使用。
+description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询、在线状态检查、免扫码快捷登录（调用后必须提示用户在手机上点确认登录）、退出登录，以及登录成功后的数据服务接管（自动写 wekeapi-msg-sync.json 并启动/重启 wekeapi-msg-sync，触发全量同步）。当用户要求登录微信、获取登录二维码、检查微信在线状态、掉线重连、免扫码快捷登录、退出微信登录或同步微信数据时使用。
 ---
 
 # login 登录
@@ -18,7 +18,7 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 1. 读取 `~/.wekeapi/config.json`（`init` 保存的 token/appId；旧版 `~/.wekeapi.json` 会被自动兼容读取）：
    - 有 token：免传凭证，继续下一步。
-   - **无 token：必须中断流程，向用户索要 AccessToken 并等待用户提供；拿到 token 之前不得执行任何后续步骤（不得取二维码、不得探测在线状态等）。** 用户提供后执行 `wekeapi init --token <TOKEN>` 保存（自动化场景带 flag；API 地址编译期内置，无需收集 baseUrl）。若用户没有 token，引导其到官网（`env` 输出的 `siteURL`）申请，并保持等待状态，直到用户提供 token 才继续。
+   - **无 token：必须中断流程，用 `AskUserQuestion` 弹框向用户索要 AccessToken，等用户在弹框里提供后再继续；拿到 token 之前不得执行任何后续步骤（不得取二维码、不得探测在线状态等）。** 弹框选项：「粘贴 AccessToken（选 `Other` 输入）」/「还没有，去官网申请」；用户选后者时展示 `$WEKEAPI env` 输出的 `siteURL`，申请完成后再次弹框收集。**禁止在回复里让用户在聊天框打字回复 token。** 拿到后执行 `wekeapi init --token <TOKEN>` 保存（自动化场景带 flag；API 地址编译期内置，无需收集 baseUrl）。
 2. 已有 appId 时先检查在线状态，**不要直接扫码**：`$WEKEAPI login status --token T --app-id A`（默认不自动重连；确需重连时显式传 `--auto-connect`）
    - 返回 1（在线）：CLI 已自动把 wxid/appId 写入配置，并把最新凭证写入 `wekeapi-msg-sync.json`，确保数据同步服务按最新凭证运行（配置未变化且服务已在运行时不会重启）；直接执行用户操作，登录编排结束。
    - 返回 0（未登录）或 -1（离线）：config 中已有 appId，优先进入第一步免扫码快捷登录（不区分主动/被动退出）。
@@ -28,9 +28,13 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 ### 第一步：免扫码快速登录（未登录/离线时优先尝试）
 
-1. `$WEKEAPI login quick --token T --app-id A`：免扫码快捷登录，手机弹窗点确认即可；成功返回新的 `qrCodeUUID`。
+1. `$WEKEAPI login quick --token T --app-id A`：免扫码快捷登录，成功返回新的 `qrCodeUUID`。
+   - **必须立即提示用户到手机确认（高优先级）**：`login quick` 成功返回后，**在下一次回复的第一句用醒目文字提示用户**「已向你的微信推送登录确认，请现在打开手机微信，在弹出页点击「确认登录」，否则确认超时会失败」；不得静默直接轮询让用户不知道要做什么。
+   - 提示同时告知：确认有效期有限，超时未点确认则本次快捷登录失败（会转扫码登录）；手机没有收到弹窗时可改用扫码登录（第二步）。
+   - 提示发出后再开始轮询；轮询超过约 30 秒仍未见用户确认（status 仍为 0/11）时，再提醒一次用户点手机上的确认，不要每 5 秒刷屏。
 2. 用返回的 `qrCodeUUID` 每 5 秒轮询 `$WEKEAPI login check --token T --app-id A --qr-code-uuid U`：
    - status=2 → 登录成功：CLI 自动记录 appId/wxid，并把凭证同步到 `wekeapi-msg-sync.json`、（重启）启动数据同步服务 → 确认服务就绪后执行用户操作。
+   - status=11（待手机点确认）：**再次提示用户在手机上点击「确认登录」**，继续轮询。
    - `login quick` 返回 -24（新设备登录后掉线、风控下线等被动退出不支持 quick），或轮询超时/失败 → 转第二步扫码登录。
 3. config 已有 appId 且离线（0/-1）时一律优先 quick，无需区分主动/被动退出；仅当 quick 返回 -24 或轮询超时/失败，才转第二步扫码登录。
 
@@ -38,11 +42,13 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 
 #### 2.1 收集登录参数（缺一不可，向用户逐项确认后才能进入 2.2）
 
-1. 登录平台 `--device-type`：`Mac` / `iPad`，二选一，必须询问。
+> 本节所有问题（登录平台、验证方式、代理方式、代理 ID/Url、省市选择）一律用 `AskUserQuestion` 弹框按序收集（见 wekeapi-core「交互输入规范」），不要在聊天框里让用户输入；互不依赖的问题（如登录平台）可放同一弹框，有前后依赖的分开弹。
+
+1. 登录平台 `--device-type`：`Mac` / `iPad`，二选一，必须弹框询问。
 2. 自动验证 `--verify-type`（仅平台为 Mac 时询问）：`auto` / `manual`；平台为 iPad 时不询问，固定 `manual`（iPad 大概率需手动人脸认证，不支持自动验证）。
-3. 代理模式 `--proxy-type`：`local`（本地代理）/ `self`（自有代理）/ `platform`（平台代理），三选一，必须询问，**优先推荐 local（本地代理）**——向用户展示选项时把 local 放首位并标注「推荐」，仅当用户明确选择其他方式或 local 不可用（无法安装本地代理工具）时才用 self/platform；并按所选模式收集 `--proxy-info`：
-   - local：本地代理 ID（形如 `pzqn-xxxx-xxxx`，CLI 无命令可查询）需用户安装官方本地代理工具并运行后才能拿到。运行 `$WEKEAPI env`，从 `proxyDownloads` 取当前环境对应平台（按用户操作系统匹配）的 `url` 展示给用户（Linux 直接展示 `note` 中的安装命令），待用户下载并运行工具取得代理 ID 后再向其索要。
-   - self：向用户索要代理 Url（http(s) 地址）。
+3. 代理模式 `--proxy-type`：`local`（本地代理）/ `self`（自有代理）/ `platform`（平台代理），三选一，必须弹框询问，**优先推荐 local（本地代理）**——向用户展示选项时把 local 放首位并标注「推荐」，仅当用户明确选择其他方式或 local 不可用（无法安装本地代理工具）时才用 self/platform；并按所选模式收集 `--proxy-info`：
+   - local：本地代理 ID（形如 `pzqn-xxxx-xxxx`，CLI 无命令可查询）需用户安装官方本地代理工具并运行后才能拿到。运行 `$WEKEAPI env`，从 `proxyDownloads` 取当前环境对应平台（按用户操作系统匹配）的 `url` 展示给用户（Linux 直接展示 `note` 中的安装命令），待用户下载并运行工具取得代理 ID 后再弹框向其索要（选 `Other` 粘贴）。
+   - self：弹框向用户索要代理 Url（http(s) 地址，选 `Other` 粘贴）。
    - platform：按「用户选择微信常用地 → 匹配城市代码 → 检测可用性 → 用城市码取二维码」流程执行（详见 wekeapi-proxy skill「平台代理选择流程」）：
      1. 采集省市：**让用户选择**，提醒文案用「选择微信常用地」，并向用户说明微信常用地通常指长期居住地或手机号归属地。两步采集、不可跳过：先 `$WEKEAPI proxy provinces` 取省份列表展示选项（选项展示不完整时提示用户手动输入省名）；**选完省后必须继续选该省对应的市**——`$WEKEAPI proxy cities --province <所选省>` 取该省城市列表展示选项（选项展示不完整时提示用户手动输入市名）。
      2. 匹配城市代码：`$WEKEAPI proxy cities --province <所选省>` 与所选市名（去掉"省/市"后缀）精确匹配取 `data[0].code`；城市不在对照表（如 上海）→ 提示切换代理方式或手选其他城市。
@@ -75,9 +81,11 @@ description: wekeapi CLI login 模块：微信扫码登录、登录状态轮询�
 - 服务目录查找顺序：`--msg-sync-dir`（`data` 命令组持久 flag）> 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 默认 `~/.wekeapi/msg-sync`；配置 `wekeapi-msg-sync.json`、日志 `wekeapi-msg-sync.log`、PID 与 SQLite 数据库都在该目录。
 - 登录命令的 stdout 仍是登录接口 JSON；服务启动进度与结果提示走 stderr（前缀 `[msg-sync]`）。若启动失败（如找不到服务可执行文件），登录仍算成功，但需向用户报告警告并检查服务目录。
 
-### 3.1 数据服务配置（登录成功后必须询问用户，两步，不可跳过）
+### 3.1 数据服务配置（登录成功后必须询问用户，按序弹框，不可跳过）
 
 登录成功时服务已按默认值启动，**紧接着必须让用户设置数据库与服务端口**，确认后用 `data config` 改写配置、`data sync` 重启生效。
+
+**全部用 `AskUserQuestion` 弹框按序收集（顺序固定：先数据库类型 → 选 MySQL 再问连接 URI → 最后端口），一次只弹一个问题，上一框答复后再弹下一框；禁止在聊天框里让用户输入。**
 
 先查看当前配置（不带修改参数时**只读、不写文件**）：
 
@@ -86,26 +94,31 @@ $WEKEAPI data config
 ```
 
 - 输出 `data.db`（sqlite/mysql）、`data.db_path`/`data.dsn`（DSN 已脱敏）、`data.port`。
-- 若已是用户此前确认过的非默认配置（如 MySQL 或端口不是 3006），先问一句「是否沿用当前配置（数据库 X，端口 Y）」，用户选择沿用则直接跳到 3.3。
-- 不要替用户决定数据库类型；**两步必须分别询问并等待用户答复**后再执行命令。
+- 若已是用户此前确认过的非默认配置（如 MySQL 或端口不是 3006），先弹一次框问「是否沿用当前配置（数据库 X，端口 Y）」（选项「沿用当前配置」/「重新配置」），选沿用则直接跳到 3.3。
+- 不要替用户决定数据库类型。
 
-**第 1 步：选数据库（二选一）**
+**弹框 1：数据库类型（二选一，本框只问类型，不附带 URI/端口）**
 
-| 选项 | 需要再问的信息 |
+| 选项 | 选定后的下一步 |
 |---|---|
-| `SQLite`（推荐，零部署，单机够用） | SQLite 文件名，**默认 `wekeapi_msg_sync.db`**（相对服务目录 `~/.wekeapi/msg-sync`）；用户确认默认值就不用改 |
-| `MySQL`（多端共享/已有 MySQL） | MySQL 连接串，三种写法均可：`mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`、`jdbc:mysql://user:pass@127.0.0.1:3306/dbname?...`（自动剥离 jdbc: 前缀并转换 JDBC 参数）、`user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`。库不存在时服务启动会**自动创建**（utf8mb4）并自动建表，账号需有 CREATE 权限；无建库权限时再让用户手工建库 |
+| `SQLite`（推荐，零部署，单机够用） | 直接进入弹框 2 问服务端口；**文件名固定默认 `wekeapi_msg_sync.db`（服务目录 `~/.wekeapi/msg-sync`），不再追问文件名** |
+| `MySQL`（多端共享/已有 MySQL） | 弹框 2 先收集 MySQL 连接 URI，拿到后弹框 3 问服务端口 |
 
-**第 2 步：选服务端口**
+**弹框 2（根据上一框分支，不得合并或跳过）**
 
-- 默认 `3006`；用户确认默认值或填 1-65535 的其他端口。端口被占用时服务启动会失败（日志见 `~/.wekeapi/msg-sync/wekeapi-msg-sync.log`），换端口重试即可。
+- 选 `MySQL`：弹框收集 **MySQL 连接 URI**（自由文本，选项「粘贴连接串（选 `Other`）」），问题描述里给示例：`mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`；也接受 `user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`、`jdbc:mysql://...`（服务自动剥离 `jdbc:` 前缀、转换 JDBC 参数）。库不存在时服务启动会**自动创建**（utf8mb4）并自动建表，账号需有 CREATE 权限；无建库权限时再提示用户手工建库。**拿到 URI 后再弹框 3 问端口。**
+- 选 `SQLite`：**直接弹框问服务端口**（不进 URI 环节，也不问文件名）。
+
+**弹框 3：服务端口**
+
+- 默认 `3006`（选项给 `3006（默认）`）+ `Other` 自定义 1-65535 端口。端口被占用时服务启动会失败（日志见 `~/.wekeapi/msg-sync/wekeapi-msg-sync.log`），换端口重试即可。
 
 ### 3.2 写入配置并重启生效
 
 ```bash
-# SQLite（文件名用用户给的值，未改则用默认 wekeapi_msg_sync.db）
-$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>
-# MySQL（连接串含特殊字符，PowerShell 用单引号包裹）
+# SQLite：只传端口，文件名保留默认 wekeapi_msg_sync.db（不必也不传 --db-path）
+$WEKEAPI data config --db sqlite --port <端口>
+# MySQL：连接串含特殊字符，PowerShell 用单引号包裹
 $WEKEAPI data config --db mysql --db-dsn '<连接 URI>' --port <端口>
 # 重启服务使配置生效（重启后自动全量同步）
 $WEKEAPI data sync
@@ -129,10 +142,10 @@ $WEKEAPI data sync
 | `login qr` | 获取登录二维码 | **`--device-type`** Mac/iPad、**`--verify-type`** manual/auto、**`--proxy-type`** local/self/platform、**`--proxy-info`**（local 传代理ID，需用户安装本地代理工具获取，下载链接见 2.1 / self 传代理Url / platform 传城市代码，须经用户选择微信常用地与可用性检测，流程见 2.1 与 wekeapi-proxy skill）；`--new-device` 按全新设备取码（忽略配置 appId，等价 `--app-id=`）；`--out` 保存二维码图片 |
 | `login check` | 轮询检测登录状态 | **`--qr-code-uuid`** |
 | `login status` | 检查在线状态（1 在线 / -1 离线 / 0 未登录）；在线时自动记录 wxid/appId，并确保数据同步服务按最新凭证运行 | `--auto-connect` 掉线时是否自动重连（可选，默认不重连） |
-| `login quick` | 快捷登录（免扫码，手机点确认） | — |
+| `login quick` | 快捷登录（免扫码，手机点确认）；**调用成功后必须立即提示用户到手机微信点「确认登录」** | — |
 | `login logout` | 主动退出登录 | — |
 | `data status` | 登录后查看数据同步状态与数据量（wekeapi-msg-sync） | — |
-| `data config` | 登录成功后设置数据同步服务的数据库（SQLite/MySQL）与端口 | `--db` sqlite/mysql、`--db-path` SQLite 文件名（默认 `wekeapi_msg_sync.db`）、`--db-dsn` MySQL 连接串、`--port`（默认 3006）；不带参数只查看当前配置 |
+| `data config` | 登录成功后设置数据同步服务的数据库（SQLite/MySQL）与端口（弹框按序收集：类型 → MySQL 连接 URI → 端口） | `--db` sqlite/mysql、`--db-path` SQLite 文件名（默认 `wekeapi_msg_sync.db`，登录流程不传）、`--db-dsn` MySQL 连接串、`--port`（默认 3006）；不带参数只查看当前配置 |
 
 ## 注意
 
