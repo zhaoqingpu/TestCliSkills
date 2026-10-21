@@ -29,7 +29,7 @@ Linux/macOS 首次使用前执行一次 `chmod +x <对应路径>`。若 macOS �
 - **无需手工启动**：`login check` 登录成功（status=2）后，CLI 会自动把 token/appId/baseURL/wxid 写入服务目录的 `wekeapi-msg-sync.json`，并启动服务；服务已启动时先关闭再启动（重新全量同步）。
 - **服务目录查找顺序**：`data` 命令的 `--msg-sync-dir` > 环境变量 `WEKEAPI_MSG_SYNC_HOME` > `~/.wekeapi/config.json` 的 `msgSyncDir`（`init --msg-sync-dir` 可设置）> 默认 `~/.wekeapi/msg-sync`。配置 `wekeapi-msg-sync.json`、日志 `wekeapi-msg-sync.log`、PID 与 SQLite 数据库都在该目录（默认 `~/.wekeapi/msg-sync/`），不再跟随仓库/可执行文件目录。
 - **查询用 `data` 命令**（见下文），服务未运行时先 `$WEKEAPI data start`。
-- **数据库与端口可配置**：默认 SQLite（`~/.wekeapi/msg-sync/wekeapi_msg_sync.db`）、端口 `3006`；用 `$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>` 或 `$WEKEAPI data config --db mysql --db-dsn '<连接串>' --port <端口>` 设置，改后 `$WEKEAPI data sync` 重启生效；不带参数只查看当前配置（不写文件）。
+- **数据库与端口可配置**：默认 SQLite（`~/.wekeapi/msg-sync/wekeapi_msg_sync.db`）、端口 `3006`；用 `$WEKEAPI data config --db sqlite --db-path <文件名> --port <端口>` 或 `$WEKEAPI data config --db mysql --db-dsn '<连接串>' --port <端口>` 设置（MySQL 库与表都由服务自动创建，`mysql://`、`jdbc:mysql://`、DSN 三种写法均可），改后 `$WEKEAPI data sync` 重启生效；不带参数只查看当前配置（不写文件）。
 - **排查**：`$WEKEAPI data status` 查看同步状态与数据量；服务日志在 `~/.wekeapi/msg-sync/wekeapi-msg-sync.log`。
 
 ## 初始化配置（推荐）
@@ -87,7 +87,7 @@ Linux/macOS 首次使用前执行一次 `chmod +x <对应路径>`。若 macOS �
 
 - `data` 命令输出与其他命令一致：`{"code":0,"message":"OK","data":{...}}`；`data.contacts[].id` 即 wxid。
 - 其他数据查询：`data messages`（消息）、`data rooms`（群聊）、`data status`（同步状态与数据量）。
-- 数据库与服务端口：`data config`（不带参数查看当前值；`--db sqlite --db-path <文件名>` 或 `--db mysql --db-dsn <连接串>` 加 `--port` 修改），改后 `data sync` 重启生效。
+- 数据库与服务端口：`data config`（不带参数查看当前值；`--db sqlite --db-path <文件名>` 或 `--db mysql --db-dsn <连接串>` 加 `--port` 修改，MySQL 库不存在会自动创建），改后 `data sync` 重启生效。
 - 服务未运行时先 `$WEKEAPI data start`；需要触发全量同步时 `$WEKEAPI data sync`（重启服务，启动后自动全量同步）。
 - 数据可能因平台同步延迟而缺失（如刚加的好友），可先 `data sync` 刷新再查；**不要把空结果直接当「联系人不存在」**。
 

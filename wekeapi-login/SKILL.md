@@ -94,7 +94,7 @@ $WEKEAPI data config
 | 选项 | 需要再问的信息 |
 |---|---|
 | `SQLite`（推荐，零部署，单机够用） | SQLite 文件名，**默认 `wekeapi_msg_sync.db`**（相对服务目录 `~/.wekeapi/msg-sync`）；用户确认默认值就不用改 |
-| `MySQL`（多端共享/已有 MySQL） | MySQL 连接 URI，形如 `mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`；也接受 DSN 写法 `user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`。提醒：**数据库需提前创建**（表由服务自动创建），账号需有建表权限 |
+| `MySQL`（多端共享/已有 MySQL） | MySQL 连接串，三种写法均可：`mysql://user:pass@127.0.0.1:3306/dbname?charset=utf8mb4`、`jdbc:mysql://user:pass@127.0.0.1:3306/dbname?...`（自动剥离 jdbc: 前缀并转换 JDBC 参数）、`user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4`。库不存在时服务启动会**自动创建**（utf8mb4）并自动建表，账号需有 CREATE 权限；无建库权限时再让用户手工建库 |
 
 **第 2 步：选服务端口**
 
